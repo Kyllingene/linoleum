@@ -197,7 +197,15 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
         i as usize
     }
 
-    fn redraw(&self, stdout: &mut StdoutLock, mut data: &str, prompt_length: usize, cursor_line: &mut u16, num_lines: &mut u16, end: usize) -> io::Result<()> {
+    fn redraw(
+        &self,
+        stdout: &mut StdoutLock,
+        mut data: &str,
+        prompt_length: usize,
+        cursor_line: &mut u16,
+        num_lines: &mut u16,
+        end: usize,
+    ) -> io::Result<()> {
         self.clear(stdout, prompt_length, *cursor_line, *num_lines)?;
 
         let size = terminal::size()?.0;
@@ -215,36 +223,45 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
                     break;
                 }
 
-                cap = (size as usize + 1).min(data.len());
+                cap = (size as usize).min(data.len());
                 write!(stdout, "\r\n{}", &data[0..cap])?;
                 *num_lines += 1;
                 *cursor_line += 1;
             }
+
+            let end = end + prompt_length;
+            queue!(stdout, cursor::MoveToColumn((end % size as usize) as u16),)?;
+
+            let move_up = *num_lines as i32 - (end / size as usize) as i32;
+            #[allow(clippy::comparison_chain, clippy::cast_abs_to_unsigned)]
+            if move_up > 0 {
+                queue!(stdout, cursor::MoveUp(move_up as u16))?;
+                *cursor_line -= move_up as u16;
+            } else if move_up < 0 {
+                queue!(stdout, cursor::MoveDown(move_up.abs() as u16))?;
+                *cursor_line += move_up.abs() as u16;
+            }
         } else if length == size as usize && end == data.len() {
-            queue!(
-                stdout,
-                cursor::MoveDown(1),
-                cursor::MoveToColumn(0),
-            )?;
+            queue!(stdout, cursor::MoveDown(1), cursor::MoveToColumn(0),)?;
 
             *num_lines += 1;
             *cursor_line += 1;
         } else {
-            queue!(
-                stdout,
-                cursor::MoveToColumn((end + prompt_length) as u16),
-            )?;
+            queue!(stdout, cursor::MoveToColumn((end + prompt_length) as u16),)?;
         }
 
         stdout.flush()
     }
 
-    fn clear(&self, stdout: &mut StdoutLock, prompt_length: usize, cursor_line: u16, num_lines: u16) -> io::Result<()> {
+    fn clear(
+        &self,
+        stdout: &mut StdoutLock,
+        prompt_length: usize,
+        cursor_line: u16,
+        num_lines: u16,
+    ) -> io::Result<()> {
         if cursor_line != 0 {
-            queue!(
-                stdout,
-                cursor::MoveUp(cursor_line),
-            )?;
+            queue!(stdout, cursor::MoveUp(cursor_line),)?;
         }
 
         queue!(
