@@ -2,7 +2,7 @@ use std::fmt::Display;
 use std::io::{self, stdout, StdoutLock, Write};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventState, KeyModifiers};
-use crossterm::{cursor, queue, terminal, ExecutableCommand};
+use crossterm::{cursor, queue, terminal};
 
 /// A highlighting scheme to apply to the user input.
 pub struct Highlight<'a>(pub &'a dyn Fn(&str) -> String);
@@ -167,12 +167,21 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
                     }
                     KeyCode::Right => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            let old_cursor = cursor;
                             cursor = self.find_word_boundary(&data, cursor, false) + 1;
-                            stdout.execute(cursor::MoveRight((cursor - old_cursor) as u16))?;
+                            self.move_to(
+                                &mut stdout,
+                                prompt_length,
+                                &mut cursor_line,
+                                cursor,
+                            )?;
                         } else if cursor != data.len() {
                             cursor += 1;
-                            stdout.execute(cursor::MoveRight(1))?;
+                            self.move_to(
+                                &mut stdout,
+                                prompt_length,
+                                &mut cursor_line,
+                                cursor,
+                            )?;
                         }
                     }
                     KeyCode::Home => {
