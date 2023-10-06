@@ -63,7 +63,7 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
         let mut data = String::new();
         let mut cursor = 0;
         let mut cursor_line = 0;
-        let mut lines = 0;
+        let mut num_lines = 0;
 
         loop {
             let ev = event::read();
@@ -91,7 +91,7 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
                                 &data,
                                 prompt_length,
                                 &mut cursor_line,
-                                &mut lines,
+                                &mut num_lines,
                                 cursor,
                             )?;
                         }
@@ -113,7 +113,7 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
                                     &data,
                                     prompt_length,
                                     &mut cursor_line,
-                                    &mut lines,
+                                    &mut num_lines,
                                     cursor,
                                 )?;
                             } else if ch == 'd' {
@@ -141,19 +141,28 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
                                 &data,
                                 prompt_length,
                                 &mut cursor_line,
-                                &mut lines,
+                                &mut num_lines,
                                 cursor,
                             )?;
                         }
                     }
                     KeyCode::Left => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            let old_cursor = cursor;
                             cursor = self.find_word_boundary(&data, cursor, true);
-                            stdout.execute(cursor::MoveLeft((old_cursor - cursor) as u16))?;
+                            self.move_to(
+                                &mut stdout,
+                                prompt_length,
+                                &mut cursor_line,
+                                cursor,
+                            )?;
                         } else if cursor != 0 {
                             cursor -= 1;
-                            stdout.execute(cursor::MoveLeft(1))?;
+                            self.move_to(
+                                &mut stdout,
+                                prompt_length,
+                                &mut cursor_line,
+                                cursor,
+                            )?;
                         }
                     }
                     KeyCode::Right => {
@@ -165,6 +174,24 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
                             cursor += 1;
                             stdout.execute(cursor::MoveRight(1))?;
                         }
+                    }
+                    KeyCode::Home => {
+                        cursor = 0;
+                        self.move_to(
+                            &mut stdout,
+                            prompt_length,
+                            &mut cursor_line,
+                            cursor,
+                        )?;
+                    }
+                    KeyCode::End => {
+                        cursor = data.len();
+                        self.move_to(
+                            &mut stdout,
+                            prompt_length,
+                            &mut cursor_line,
+                            cursor,
+                        )?;
                     }
                     _ => {}
                 }
@@ -197,16 +224,45 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
         i as usize
     }
 
+    fn move_to(
+        &self,
+        stdout: &mut StdoutLock,
+        prompt_length: usize,
+        cursor_line: &mut u16,
+        end: usize,
+    ) -> io::Result<()> {
+        let size = terminal::size()?.0;
+
+        let end = end + prompt_length;
+        queue!(stdout, cursor::MoveToColumn(end as u16 % size as u16))?;
+
+        let move_up = *cursor_line as i32 - end as i32 / size as i32;
+        let m = move_up.unsigned_abs() as u16;
+        #[allow(clippy::comparison_chain)]
+        if move_up > 0 {
+            queue!(stdout, cursor::MoveUp(m))?;
+            *cursor_line -= m;
+        } else if move_up < 0 {
+            queue!(stdout, cursor::MoveDown(m))?;
+            *cursor_line += m;
+        }
+
+        stdout.flush()
+    }
+
     fn redraw(
         &self,
         stdout: &mut StdoutLock,
-        mut data: &str,
+        data: &str,
         prompt_length: usize,
         cursor_line: &mut u16,
         num_lines: &mut u16,
         end: usize,
     ) -> io::Result<()> {
         self.clear(stdout, prompt_length, *cursor_line, *num_lines)?;
+
+        let highlighted = (self.highlight.0)(data);
+        let mut data = highlighted.as_str();
 
         let size = terminal::size()?.0;
 
@@ -230,24 +286,25 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
             }
 
             let end = end + prompt_length;
-            queue!(stdout, cursor::MoveToColumn((end % size as usize) as u16),)?;
+            queue!(stdout, cursor::MoveToColumn((end % size as usize) as u16))?;
 
             let move_up = *num_lines as i32 - (end / size as usize) as i32;
-            #[allow(clippy::comparison_chain, clippy::cast_abs_to_unsigned)]
+            let m = move_up.unsigned_abs() as u16;
+            #[allow(clippy::comparison_chain)]
             if move_up > 0 {
-                queue!(stdout, cursor::MoveUp(move_up as u16))?;
-                *cursor_line -= move_up as u16;
+                queue!(stdout, cursor::MoveUp(m))?;
+                *cursor_line -= m;
             } else if move_up < 0 {
-                queue!(stdout, cursor::MoveDown(move_up.abs() as u16))?;
-                *cursor_line += move_up.abs() as u16;
+                queue!(stdout, cursor::MoveDown(m))?;
+                *cursor_line += m;
             }
         } else if length == size as usize && end == data.len() {
-            queue!(stdout, cursor::MoveDown(1), cursor::MoveToColumn(0),)?;
+            queue!(stdout, cursor::MoveDown(1), cursor::MoveToColumn(0))?;
 
             *num_lines += 1;
             *cursor_line += 1;
         } else {
-            queue!(stdout, cursor::MoveToColumn((end + prompt_length) as u16),)?;
+            queue!(stdout, cursor::MoveToColumn((end + prompt_length) as u16))?;
         }
 
         stdout.flush()
