@@ -86,12 +86,12 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
                         if cursor != 0 {
                             cursor -= 1;
                             data.remove(cursor);
-                            (cursor_line, lines) = self.redraw(
+                            self.redraw(
                                 &mut stdout,
                                 &data,
-                                cursor_line,
-                                lines,
                                 prompt_length,
+                                &mut cursor_line,
+                                &mut lines,
                                 cursor,
                             )?;
                         }
@@ -108,12 +108,12 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
                                     .chain(data.chars().skip(old_cursor))
                                     .collect();
 
-                                (cursor_line, lines) = self.redraw(
+                                self.redraw(
                                     &mut stdout,
                                     &data,
-                                    cursor_line,
-                                    lines,
                                     prompt_length,
+                                    &mut cursor_line,
+                                    &mut lines,
                                     cursor,
                                 )?;
                             } else if ch == 'd' {
@@ -136,12 +136,12 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
 
                             data.insert(cursor, ch);
                             cursor += 1;
-                            (cursor_line, lines) = self.redraw(
+                            self.redraw(
                                 &mut stdout,
                                 &data,
-                                cursor_line,
-                                lines,
                                 prompt_length,
+                                &mut cursor_line,
+                                &mut lines,
                                 cursor,
                             )?;
                         }
@@ -197,66 +197,54 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
         i as usize
     }
 
-    /// Redraws the user input.
-    ///
-    /// Returns the new cursor_line and num_lines.
-    fn redraw(
-        &self,
-        stdout: &mut StdoutLock,
-        data: &str,
-        cursor_line: u16,
-        num_lines: u16,
-        prompt_length: usize,
-        end: usize,
-    ) -> io::Result<(u16, u16)> {
+    fn redraw(&self, stdout: &mut StdoutLock, mut data: &str, prompt_length: usize, cursor_line: &mut u16, num_lines: &mut u16, end: usize) -> io::Result<()> {
+        self.clear(stdout, prompt_length, *cursor_line, *num_lines)?;
+
         let size = terminal::size()?.0;
 
-        let cap = data.len().min(size as usize - prompt_length);
-        let first_line = &data[0..cap];
+        let mut cap = (size as usize - prompt_length).min(data.len());
+        write!(stdout, "{}", &data[0..cap])?;
 
-        let mut lines = Vec::with_capacity((data.len() + prompt_length) / size as usize);
-        if lines.capacity() > 0 {
-            let mut data = &data[size as usize - prompt_length..];
+        *num_lines = 0;
+        *cursor_line = 0;
+        let length = data.len() + prompt_length;
+        if length > size as usize {
+            loop {
+                data = &data[cap..];
+                if data.is_empty() {
+                    break;
+                }
 
-            while !data.is_empty() {
-                let (chunk, rest) = data.split_at((size as usize).min(data.len()));
-                lines.push(chunk);
-                data = rest;
+                cap = (size as usize + 1).min(data.len());
+                write!(stdout, "\r\n{}", &data[0..cap])?;
+                *num_lines += 1;
+                *cursor_line += 1;
             }
+        } else if length == size as usize && end == data.len() {
+            queue!(
+                stdout,
+                cursor::MoveDown(1),
+                cursor::MoveToColumn(0),
+            )?;
+
+            *num_lines += 1;
+            *cursor_line += 1;
+        } else {
+            queue!(
+                stdout,
+                cursor::MoveToColumn((end + prompt_length) as u16),
+            )?;
         }
 
-        self.clear(stdout, prompt_length, cursor_line, num_lines)?;
-        write!(stdout, "{first_line}")?;
-
-        for line in &lines {
-            write!(stdout, "\r\n{line}")?;
-        }
-
-        queue!(
-            stdout,
-            cursor::MoveToColumn(((end + prompt_length) % size as usize) as u16),
-        )?;
-
-        let go_up = (lines.len() - ((end + prompt_length - 1) / size as usize)) as u16;
-        if go_up != 0 {
-            queue!(stdout, cursor::MoveUp(go_up))?;
-        }
-
-        stdout.flush()?;
-
-        Ok(((end / size as usize) as u16, lines.len() as u16))
+        stdout.flush()
     }
 
-    /// Clears the user input from the screen.
-    fn clear(
-        &self,
-        stdout: &mut StdoutLock,
-        prompt_length: usize,
-        cursor_line: u16,
-        lines: u16,
-    ) -> io::Result<()> {
+    fn clear(&self, stdout: &mut StdoutLock, prompt_length: usize, cursor_line: u16, num_lines: u16) -> io::Result<()> {
         if cursor_line != 0 {
-            queue!(stdout, cursor::MoveUp(cursor_line))?;
+            queue!(
+                stdout,
+                cursor::MoveUp(cursor_line),
+            )?;
         }
 
         queue!(
@@ -265,29 +253,25 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
             terminal::Clear(terminal::ClearType::UntilNewLine),
         )?;
 
-        if cursor_line == 0 {
-            return stdout.flush();
+        if num_lines == 0 {
+            return Ok(());
         }
 
-        queue!(stdout, cursor::MoveToColumn(0))?;
-
-        for _ in 0..lines {
+        for _ in 0..num_lines {
             queue!(
                 stdout,
                 cursor::MoveDown(1),
+                cursor::MoveToColumn(0),
                 terminal::Clear(terminal::ClearType::CurrentLine),
             )?;
         }
 
-        if lines != 0 {
-            queue!(stdout, cursor::MoveUp(lines))?;
-        }
-
         queue!(
             stdout,
+            cursor::MoveUp(num_lines),
             cursor::MoveToColumn(prompt_length as u16),
         )?;
 
-        stdout.flush()
+        Ok(())
     }
 }
