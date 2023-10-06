@@ -1,52 +1,73 @@
-use std::io::{self, Write, stdout};
 use std::fmt::Display;
+use std::io::{self, stdout, StdoutLock, Write};
 
-use crossterm::{terminal, ExecutableCommand, cursor};
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEventState, KeyModifiers};
+use crossterm::{cursor, queue, terminal, ExecutableCommand};
+
+/// A highlighting scheme to apply to the user input.
+pub struct Highlight<'a>(pub &'a dyn Fn(&str) -> String);
 
 /// The default characters on which to break words.
 pub const WORD_BREAKS: &str = "-_=+[]{}()<>,./\\`'\";:!@#$%^&*?|~ ";
 
-/// The line reader. 
-pub struct Linefeed<'a, P: Display> {
-    prompt: P,
-    word_breaks: &'a str,
+/// The result of [`Linefeed::read`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LineResult {
+    Ok(String),
+    Cancel,
+    Quit,
 }
 
-impl<'a, P: Display> Linefeed<'a, P> {
-    /// Creates a new linefeed.
-    pub fn new(prompt: P, word_breaks: &'a str) -> Self {
-        Self {
-            prompt,
-            word_breaks,
-        }
-    }
+/// A line reader.
+pub struct Linefeed<'a, 'b, P: Display> {
+    prompt: P,
+    word_breaks: &'a str,
+    highlight: Highlight<'b>,
+}
 
-    /// Creates a new linefeed. Uses default word break characters.
-    pub fn default(prompt: P) -> Self {
+impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
+    /// Creates a new linefeed with empty highlight and default word breaks.
+    pub fn new(prompt: P) -> Self {
         Self {
             prompt,
             word_breaks: WORD_BREAKS,
+            highlight: Highlight(&|s| s.to_string()),
         }
+    }
+
+    /// Sets the word break characters the linefeed respects.
+    pub fn word_breaks(&mut self, word_breaks: &'a str) -> &mut Self {
+        self.word_breaks = word_breaks;
+        self
+    }
+
+    /// Sets the highlight of the linefeed.
+    pub fn highlight(&mut self, highlight: Highlight<'b>) -> &mut Self {
+        self.highlight = highlight;
+        self
     }
 
     /// Reads a line from stdin.
     ///
     /// Precedes with prompt. Enters terminal raw mode for the duration
     /// of the read.
-    pub fn read(&mut self) -> io::Result<String> {
+    pub fn read(&mut self) -> io::Result<LineResult> {
         let mut stdout = stdout().lock();
 
-        print!("{}", self.prompt);
+        let prompt = self.prompt.to_string();
+        let prompt_length = prompt.len();
+        write!(stdout, "{}", prompt)?;
         stdout.flush()?;
         terminal::enable_raw_mode()?;
 
         let mut data = String::new();
         let mut cursor = 0;
+        let mut cursor_line = 0;
+        let mut lines = 0;
 
         loop {
             let ev = event::read();
-            
+
             let ev = match ev {
                 Ok(ev) => ev,
                 Err(e) => {
@@ -56,40 +77,73 @@ impl<'a, P: Display> Linefeed<'a, P> {
             };
 
             if let Event::Key(key) = ev {
+                let caps = key.modifiers.contains(KeyModifiers::SHIFT)
+                    ^ key.state.contains(KeyEventState::CAPS_LOCK);
+
                 match key.code {
                     KeyCode::Enter => break,
                     KeyCode::Backspace => {
                         if cursor != 0 {
-                            stdout.execute(cursor::MoveLeft(1))?;
-                            write!(stdout, " ")?;
-                            stdout.execute(cursor::MoveLeft(1))?;
-
                             cursor -= 1;
-                            data.truncate(cursor);
+                            data.remove(cursor);
+                            (cursor_line, lines) = self.redraw(
+                                &mut stdout,
+                                &data,
+                                cursor_line,
+                                lines,
+                                prompt_length,
+                                cursor,
+                            )?;
                         }
                     }
-                    KeyCode::Char(ch) => {
-                        if ch == 'h' && key.modifiers.contains(KeyModifiers::CONTROL) {
-                            let old_cursor = cursor;
-                            cursor = self.find_word_boundary(&data, cursor, true);
-                            stdout.execute(cursor::MoveLeft((old_cursor - cursor) as u16))?;
-                            let diff = old_cursor - cursor;
-                            write!(stdout, "{}", " ".repeat(diff))?;
-                            stdout.execute(cursor::MoveLeft(diff as u16))?;
+                    KeyCode::Char(mut ch) => {
+                        if key.modifiers.contains(KeyModifiers::CONTROL) {
+                            if ch == 'h' {
+                                let old_cursor = cursor;
+                                cursor = self.find_word_boundary(&data, cursor, true);
 
-                            data.truncate(cursor);
+                                data = data
+                                    .chars()
+                                    .take(cursor)
+                                    .chain(data.chars().skip(old_cursor))
+                                    .collect();
+
+                                (cursor_line, lines) = self.redraw(
+                                    &mut stdout,
+                                    &data,
+                                    cursor_line,
+                                    lines,
+                                    prompt_length,
+                                    cursor,
+                                )?;
+                            } else if ch == 'd' {
+                                terminal::disable_raw_mode()?;
+                                writeln!(stdout)?;
+                                return Ok(if data.is_empty() {
+                                    LineResult::Quit
+                                } else {
+                                    LineResult::Cancel
+                                });
+                            } else if ch == 'c' {
+                                terminal::disable_raw_mode()?;
+                                writeln!(stdout)?;
+                                return Ok(LineResult::Cancel);
+                            }
                         } else {
-                            write!(stdout, "{ch}")?;
-                            stdout.flush()?;
+                            if caps {
+                                ch = ch.to_uppercase().next().unwrap();
+                            }
 
                             data.insert(cursor, ch);
                             cursor += 1;
-
-                            if cursor != data.len() {
-                                write!(stdout, "{}", &data[cursor..])?;
-                                stdout.execute(cursor::MoveLeft((data.len() - cursor) as u16))?;
-                                stdout.flush()?;
-                            }
+                            (cursor_line, lines) = self.redraw(
+                                &mut stdout,
+                                &data,
+                                cursor_line,
+                                lines,
+                                prompt_length,
+                                cursor,
+                            )?;
                         }
                     }
                     KeyCode::Left => {
@@ -118,14 +172,18 @@ impl<'a, P: Display> Linefeed<'a, P> {
         }
 
         terminal::disable_raw_mode()?;
-        println!();
-        Ok(data)
+        writeln!(stdout)?;
+        Ok(LineResult::Ok(data))
     }
 
     /// Finds a word boundary.
     fn find_word_boundary(&self, data: &str, start: usize, backwards: bool) -> usize {
         let chars: Vec<char> = data.chars().collect();
-        let (step, stop) = if backwards { ( -1, 0 ) } else { ( 1, data.len() as i64 - 1 ) };
+        let (step, stop) = if backwards {
+            (-1, 0)
+        } else {
+            (1, data.len() as i64 - 1)
+        };
         let mut i = start as i64;
 
         while i != stop {
@@ -138,12 +196,98 @@ impl<'a, P: Display> Linefeed<'a, P> {
 
         i as usize
     }
+
+    /// Redraws the user input.
+    ///
+    /// Returns the new cursor_line and num_lines.
+    fn redraw(
+        &self,
+        stdout: &mut StdoutLock,
+        data: &str,
+        cursor_line: u16,
+        num_lines: u16,
+        prompt_length: usize,
+        end: usize,
+    ) -> io::Result<(u16, u16)> {
+        let size = terminal::size()?.0;
+
+        let cap = data.len().min(size as usize - prompt_length);
+        let first_line = &data[0..cap];
+
+        let mut lines = Vec::with_capacity((data.len() + prompt_length) / size as usize);
+        if lines.capacity() > 0 {
+            let mut data = &data[size as usize - prompt_length..];
+
+            while !data.is_empty() {
+                let (chunk, rest) = data.split_at((size as usize).min(data.len()));
+                lines.push(chunk);
+                data = rest;
+            }
+        }
+
+        self.clear(stdout, prompt_length, cursor_line, num_lines)?;
+        write!(stdout, "{first_line}")?;
+
+        for line in &lines {
+            write!(stdout, "\r\n{line}")?;
+        }
+
+        queue!(
+            stdout,
+            cursor::MoveToColumn(((end + prompt_length) % size as usize) as u16),
+        )?;
+
+        let go_up = (lines.len() - ((end + prompt_length - 1) / size as usize)) as u16;
+        if go_up != 0 {
+            queue!(stdout, cursor::MoveUp(go_up))?;
+        }
+
+        stdout.flush()?;
+
+        Ok(((end / size as usize) as u16, lines.len() as u16))
+    }
+
+    /// Clears the user input from the screen.
+    fn clear(
+        &self,
+        stdout: &mut StdoutLock,
+        prompt_length: usize,
+        cursor_line: u16,
+        lines: u16,
+    ) -> io::Result<()> {
+        if cursor_line != 0 {
+            queue!(stdout, cursor::MoveUp(cursor_line))?;
+        }
+
+        queue!(
+            stdout,
+            cursor::MoveToColumn(prompt_length as u16),
+            terminal::Clear(terminal::ClearType::UntilNewLine),
+        )?;
+
+        if cursor_line == 0 {
+            return stdout.flush();
+        }
+
+        queue!(stdout, cursor::MoveToColumn(0))?;
+
+        for _ in 0..lines {
+            queue!(
+                stdout,
+                cursor::MoveDown(1),
+                terminal::Clear(terminal::ClearType::CurrentLine),
+            )?;
+        }
+
+        if lines != 0 {
+            queue!(stdout, cursor::MoveUp(lines))?;
+        }
+
+        queue!(
+            stdout,
+            cursor::MoveToColumn(prompt_length as u16),
+        )?;
+
+        stdout.flush()
+    }
 }
-
-// impl<'a, P: Display> Drop for Linefeed<'a, P> {
-//     fn drop(&mut self) {
-//         terminal::disable_raw_mode()
-//             .expect("failed to disable raw mode");
-//     }
-// }
-
