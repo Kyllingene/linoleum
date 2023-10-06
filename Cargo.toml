@@ -1,9 +1,13 @@
 [package]
-name = "linament"
-version = "0.1.0"
+name = "linoleum"
+version = "1.0.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT"
+authors = ["Kyllingene"]
+description = "A simple but ergonomic line editor."
+repository = "https://github.com/Kyllingene/linoleum"
 
 [dependencies]
 crossterm = "0.27.0"
+

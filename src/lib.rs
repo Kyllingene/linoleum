@@ -1,3 +1,5 @@
+#![cfg_attr(not(doctest), doc = include_str!("../README.md"))]
+
 use std::fmt::Display;
 use std::io::{self, stdout, StdoutLock, Write};
 
@@ -10,23 +12,43 @@ pub struct Highlight<'a>(pub &'a dyn Fn(&str) -> String);
 /// The default characters on which to break words.
 pub const WORD_BREAKS: &str = "-_=+[]{}()<>,./\\`'\";:!@#$%^&*?|~ ";
 
-/// The result of [`Linefeed::read`].
+/// The result of [`Editor::read`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LineResult {
+pub enum EditResult {
     Ok(String),
     Cancel,
     Quit,
 }
 
-/// A line reader.
-pub struct Linefeed<'a, 'b, P: Display> {
+/// A line editor.
+///
+/// Ctrl-C returns an [`EditResult::Cancel`];
+/// Ctrl-D returns an [`EditResult::Quit`].
+///
+/// Example:
+/// ```no_run
+/// # use linoleum::{Editor, EditResult};
+/// let editor = Editor::new(" > ");
+/// match editor.read().expect("Failed to read line") {
+///     EditResult::Ok(s) => println!("You entered: '{s}'"),
+///     EditResult::Cancel => println!("You canceled!"),
+///     EditResult::Quit => std::process::exit(1),
+/// }
+/// ```
+pub struct Editor<'a, 'b, P: Display> {
     prompt: P,
     word_breaks: &'a str,
     highlight: Highlight<'b>,
 }
 
-impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
-    /// Creates a new linefeed with empty highlight and default word breaks.
+impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
+    /// Creates a new editor with empty highlight and default word breaks.
+    ///
+    /// Example:
+    /// ```
+    /// # use linoleum::Editor;
+    /// let editor = Editor::new(" > ");
+    /// ```
     pub fn new(prompt: P) -> Self {
         Self {
             prompt,
@@ -35,15 +57,50 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
         }
     }
 
-    /// Sets the word break characters the linefeed respects.
+    /// Sets the word break characters the editor respects.
+    ///
+    /// Example:
+    /// ```
+    /// # use linoleum::Editor;
+    /// // Create a new editor that doesn't break words.
+    /// let editor = Editor::new(" > ")
+    ///     .word_breaks("");
+    /// ```
     pub fn word_breaks(&mut self, word_breaks: &'a str) -> &mut Self {
         self.word_breaks = word_breaks;
         self
     }
 
-    /// Sets the highlight of the linefeed.
+    /// Sets the highlighter of the editor.
+    ///
+    /// Example:
+    /// ```
+    /// # use linoleum::{Editor, Highlight};
+    /// fn underline(s: &str, pat: &str) -> String {
+    ///     // ...
+    ///     # s.to_string()
+    /// }
+    ///
+    /// // Create a new editor with a highlighter.
+    /// let editor = Editor::new(" > ")
+    ///     .highlight(Highlight(&|s| underline(s, "hello, world!")));
+    /// ```
     pub fn highlight(&mut self, highlight: Highlight<'b>) -> &mut Self {
         self.highlight = highlight;
+        self
+    }
+
+    /// Updates the prompt of the editor. Returns an [`EditResult`] with the data.
+    ///
+    /// Example:
+    /// ```
+    /// # use linoleum::{Editor, Highlight};
+    /// let mut editor = Editor::new(" > ");
+    /// // ...
+    /// editor.prompt("{~} ");
+    /// ```
+    pub fn prompt(&mut self, prompt: P) -> &mut Self {
+        self.prompt = prompt;
         self
     }
 
@@ -51,7 +108,18 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
     ///
     /// Precedes with prompt. Enters terminal raw mode for the duration
     /// of the read.
-    pub fn read(&mut self) -> io::Result<LineResult> {
+    ///
+    /// Example:
+    /// ```no_run
+    /// # use linoleum::{Editor, EditResult};
+    /// let editor = Editor::new(" > ");
+    /// match editor.read().expect("Failed to read line") {
+    ///     EditResult::Ok(s) => println!("You entered: '{s}'"),
+    ///     EditResult::Cancel => println!("You canceled!"),
+    ///     EditResult::Quit => std::process::exit(1),
+    /// }
+    /// ```
+    pub fn read(&self) -> io::Result<EditResult> {
         let mut stdout = stdout().lock();
 
         let prompt = self.prompt.to_string();
@@ -120,14 +188,14 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
                                 terminal::disable_raw_mode()?;
                                 writeln!(stdout)?;
                                 return Ok(if data.is_empty() {
-                                    LineResult::Quit
+                                    EditResult::Quit
                                 } else {
-                                    LineResult::Cancel
+                                    EditResult::Cancel
                                 });
                             } else if ch == 'c' {
                                 terminal::disable_raw_mode()?;
                                 writeln!(stdout)?;
-                                return Ok(LineResult::Cancel);
+                                return Ok(EditResult::Cancel);
                             }
                         } else {
                             if caps {
@@ -149,58 +217,28 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
                     KeyCode::Left => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
                             cursor = self.find_word_boundary(&data, cursor, true);
-                            self.move_to(
-                                &mut stdout,
-                                prompt_length,
-                                &mut cursor_line,
-                                cursor,
-                            )?;
+                            self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
                         } else if cursor != 0 {
                             cursor -= 1;
-                            self.move_to(
-                                &mut stdout,
-                                prompt_length,
-                                &mut cursor_line,
-                                cursor,
-                            )?;
+                            self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
                         }
                     }
                     KeyCode::Right => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
                             cursor = self.find_word_boundary(&data, cursor, false) + 1;
-                            self.move_to(
-                                &mut stdout,
-                                prompt_length,
-                                &mut cursor_line,
-                                cursor,
-                            )?;
+                            self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
                         } else if cursor != data.len() {
                             cursor += 1;
-                            self.move_to(
-                                &mut stdout,
-                                prompt_length,
-                                &mut cursor_line,
-                                cursor,
-                            )?;
+                            self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
                         }
                     }
                     KeyCode::Home => {
                         cursor = 0;
-                        self.move_to(
-                            &mut stdout,
-                            prompt_length,
-                            &mut cursor_line,
-                            cursor,
-                        )?;
+                        self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
                     }
                     KeyCode::End => {
                         cursor = data.len();
-                        self.move_to(
-                            &mut stdout,
-                            prompt_length,
-                            &mut cursor_line,
-                            cursor,
-                        )?;
+                        self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
                     }
                     _ => {}
                 }
@@ -209,7 +247,7 @@ impl<'a, 'b, P: Display> Linefeed<'a, 'b, P> {
 
         terminal::disable_raw_mode()?;
         writeln!(stdout)?;
-        Ok(LineResult::Ok(data))
+        Ok(EditResult::Ok(data))
     }
 
     /// Finds a word boundary.
