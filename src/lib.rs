@@ -6,6 +6,9 @@ use std::io::{self, stdout, StdoutLock, Write};
 use crossterm::event::{self, Event, KeyCode, KeyEventState, KeyModifiers};
 use crossterm::{cursor, queue, terminal};
 
+mod history;
+pub use history::History;
+
 /// A highlighting scheme to apply to the user input.
 pub struct Highlight<'a>(pub &'a dyn Fn(&str) -> String);
 
@@ -39,6 +42,7 @@ pub struct Editor<'a, 'b, P: Display> {
     prompt: P,
     word_breaks: &'a str,
     highlight: Highlight<'b>,
+    history: Option<History>,
 }
 
 impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
@@ -54,6 +58,7 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
             prompt,
             word_breaks: WORD_BREAKS,
             highlight: Highlight(&|s| s.to_string()),
+            history: None,
         }
     }
 
@@ -66,7 +71,7 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
     /// let editor = Editor::new(" > ")
     ///     .word_breaks("");
     /// ```
-    pub fn word_breaks(&mut self, word_breaks: &'a str) -> &mut Self {
+    pub fn word_breaks(mut self, word_breaks: &'a str) -> Self {
         self.word_breaks = word_breaks;
         self
     }
@@ -85,7 +90,7 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
     /// let editor = Editor::new(" > ")
     ///     .highlight(Highlight(&|s| underline(s, "hello, world!")));
     /// ```
-    pub fn highlight(&mut self, highlight: Highlight<'b>) -> &mut Self {
+    pub fn highlight(mut self, highlight: Highlight<'b>) -> Self {
         self.highlight = highlight;
         self
     }
@@ -99,9 +104,40 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
     /// // ...
     /// editor.prompt("{~} ");
     /// ```
-    pub fn prompt(&mut self, prompt: P) -> &mut Self {
+    pub fn prompt(&mut self, prompt: P) {
         self.prompt = prompt;
-        self
+    }
+
+    /// Sets the file to use for history.
+    ///
+    /// Opens and reads the file immediately.
+    ///
+    /// Example:
+    /// ```
+    /// # use linoleum::{Editor, History};
+    /// let editor = Editor::new(" > ")
+    ///     .history("~/.history");
+    /// ```
+    pub fn history<S: ToString>(mut self, history: S) -> io::Result<Self> {
+        self.history = Some(History::new(history.to_string())?);
+        Ok(self)
+    }
+
+    /// Resets the history cursor.
+    /// See [`History::reset_history_index`].
+    pub fn reset_history_index(&mut self) {
+        if let Some(h) = &mut self.history {
+            h.reset_index();
+        }
+    }
+
+    /// Saves the history. See [`History::save`].
+    pub fn save_history(&self) -> io::Result<()> {
+        if let Some(h) = &self.history {
+            h.save()
+        } else {
+            Ok(())
+        }
     }
 
     /// Reads a line from stdin.
@@ -119,7 +155,7 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
     ///     EditResult::Quit => std::process::exit(1),
     /// }
     /// ```
-    pub fn read(&self) -> io::Result<EditResult> {
+    pub fn read(&mut self) -> io::Result<EditResult> {
         let mut stdout = stdout().lock();
 
         let prompt = self.prompt.to_string();
@@ -186,6 +222,7 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
                                 )?;
                             } else if ch == 'd' {
                                 terminal::disable_raw_mode()?;
+                                self.reset_history_index();
                                 writeln!(stdout)?;
                                 return Ok(if data.is_empty() {
                                     EditResult::Quit
@@ -194,6 +231,7 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
                                 });
                             } else if ch == 'c' {
                                 terminal::disable_raw_mode()?;
+                                self.reset_history_index();
                                 writeln!(stdout)?;
                                 return Ok(EditResult::Cancel);
                             }
@@ -232,6 +270,49 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
                             self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
                         }
                     }
+                    KeyCode::Up => {
+                        if let Some(h) = &mut self.history {
+                            if let Some(line) = h.up() {
+                                data = line;
+                                cursor = data.len();
+                                self.redraw(
+                                    &mut stdout,
+                                    &data,
+                                    prompt_length,
+                                    &mut cursor_line,
+                                    &mut num_lines,
+                                    cursor,
+                                )?;
+                            }
+                        }
+                    }
+                    KeyCode::Down => {
+                        if let Some(h) = &mut self.history {
+                            if let Some(line) = h.down() {
+                                data = line;
+                                cursor = data.len();
+                                self.redraw(
+                                    &mut stdout,
+                                    &data,
+                                    prompt_length,
+                                    &mut cursor_line,
+                                    &mut num_lines,
+                                    cursor,
+                                )?;
+                            } else {
+                                data.clear();
+                                cursor = 0;
+                                self.redraw(
+                                    &mut stdout,
+                                    &data,
+                                    prompt_length,
+                                    &mut cursor_line,
+                                    &mut num_lines,
+                                    cursor,
+                                )?;
+                            }
+                        }
+                    }
                     KeyCode::Home => {
                         cursor = 0;
                         self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
@@ -246,6 +327,12 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
         }
 
         terminal::disable_raw_mode()?;
+        self.reset_history_index();
+        
+        if let Some(h) = &mut self.history {
+            h.push(data.clone());
+        }
+
         writeln!(stdout)?;
         Ok(EditResult::Ok(data))
     }
@@ -271,6 +358,7 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
         i as usize
     }
 
+    /// Moves the visual cursor to the appropriate position.
     fn move_to(
         &self,
         stdout: &mut StdoutLock,
@@ -396,3 +484,10 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
         Ok(())
     }
 }
+
+impl<'a, 'b, P: Display> Drop for Editor<'a, 'b, P> {
+    fn drop(&mut self) {
+        self.save_history().expect("failed to save history");
+    }
+}
+
