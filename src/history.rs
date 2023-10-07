@@ -5,12 +5,13 @@ pub struct History {
     lines: Vec<String>,
     file: String,
     index: usize,
+    max_lines: usize,
 }
 
 impl History {
     /// Creates a new history. Reads from the provided file,
     /// if it exists.
-    pub fn new(file_path: String) -> io::Result<Self> {
+    pub fn new(file_path: String, max_lines: usize) -> io::Result<Self> {
         let mut lines = String::new();
 
         match File::open(&file_path) {
@@ -30,6 +31,7 @@ impl History {
             index: lines.len(),
             lines,
             file: file_path,
+            max_lines,
         })
     }
 
@@ -48,6 +50,7 @@ impl History {
     /// Adds a line to the history.
     pub fn push(&mut self, l: String) {
         self.lines.push(l);
+        self.lines.truncate(self.max_lines);
         self.index = self.lines.len();
     }
 

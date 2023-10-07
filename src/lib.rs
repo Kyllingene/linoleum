@@ -34,7 +34,7 @@ pub enum EditResult {
 /// Example:
 /// ```no_run
 /// # use linoleum::{Editor, EditResult};
-/// let editor = Editor::new(" > ");
+/// let mut editor = Editor::new(" > ");
 /// match editor.read().expect("Failed to read line") {
 ///     EditResult::Ok(s) => println!("You entered: '{s}'"),
 ///     EditResult::Cancel => println!("You canceled!"),
@@ -104,28 +104,28 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
     ///
     /// Example:
     /// ```
-    /// # use linoleum::{Editor, Highlight};
+    /// # use linoleum::{Editor, Completion};
     /// fn complete(s: &str) -> Vec<String> {
     ///     let s = "hello".to_string();
-    ///     if s.starts_with(s) {
+    ///     if s.starts_with(&s) {
     ///         vec![s]
     ///     } else {
     ///         Vec::new()
     ///     }
     /// }
     /// let editor = Editor::new(" > ")
-    ///     .completion(Completion(&|s| ));
+    ///     .completion(Completion(&complete));
     /// ```
     pub fn completion(mut self, completion: Completion<'c>) -> Self {
         self.completion = Some(completion);
         self
     }
 
-    /// Updates the prompt of the editor. Returns an [`EditResult`] with the data.
+    /// Updates the prompt of the editor.
     ///
     /// Example:
     /// ```
-    /// # use linoleum::{Editor, Highlight};
+    /// # use linoleum::{Editor, Completion};
     /// let mut editor = Editor::new(" > ");
     /// // ...
     /// editor.prompt("{~} ");
@@ -139,18 +139,28 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
     /// Opens and reads the file immediately.
     ///
     /// Example:
-    /// ```
-    /// # use linoleum::{Editor, History};
+    /// ```no_run
+    /// # use linoleum::Editor;
     /// let editor = Editor::new(" > ")
-    ///     .history("~/.history");
+    ///     .history("~/.history", 1000)
+    ///     .expect("failed to read history");
     /// ```
-    pub fn history<S: ToString>(mut self, history: S) -> io::Result<Self> {
-        self.history = Some(History::new(history.to_string())?);
+    pub fn history<S: ToString>(mut self, history: S, max_lines: usize) -> io::Result<Self> {
+        self.history = Some(History::new(history.to_string(), max_lines)?);
         Ok(self)
     }
 
-    /// Resets the history cursor.
-    /// See [`History::reset_index`].
+    /// Resets the history index to the most recent.
+    ///
+    /// Example:
+    /// ```no_run
+    /// # use linoleum::Editor;
+    /// let mut editor = Editor::new(" > ")
+    ///     .history("~/.history", 1000)
+    ///     .expect("failed to read history");
+    /// // ...
+    /// editor.reset_history_index();
+    /// ```
     pub fn reset_history_index(&mut self) {
         if let Some(h) = &mut self.history {
             h.reset_index();
@@ -174,7 +184,7 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
     /// Example:
     /// ```no_run
     /// # use linoleum::{Editor, EditResult};
-    /// let editor = Editor::new(" > ");
+    /// let mut editor = Editor::new(" > ");
     /// match editor.read().expect("Failed to read line") {
     ///     EditResult::Ok(s) => println!("You entered: '{s}'"),
     ///     EditResult::Cancel => println!("You canceled!"),
@@ -192,7 +202,7 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
 
         let mut data = String::new();
         let mut cursor = 0;
-        
+
         let mut cursor_line = 0;
         let mut num_lines = 0;
 
@@ -581,7 +591,11 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
             write!(
                 stdout,
                 "\r\n {}{l:0width$}\x1b[0m",
-                if idx == completion_index { "\x1b[38;5;6m" } else { "" },
+                if idx == completion_index {
+                    "\x1b[38;5;6m"
+                } else {
+                    ""
+                },
                 width = width - r.map_or(0, |s| s.len()),
             )?;
 
@@ -591,7 +605,11 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
                 write!(
                     stdout,
                     " {}{r}\x1b[0m",
-                    if idx == completion_index { "\x1b[38;5;6m" } else { "" },
+                    if idx == completion_index {
+                        "\x1b[38;5;6m"
+                    } else {
+                        ""
+                    },
                 )?;
             }
 
@@ -801,4 +819,3 @@ impl<'a, 'b, 'c, P: Display> Drop for Editor<'a, 'b, 'c, P> {
         self.save_history().expect("failed to save history");
     }
 }
-

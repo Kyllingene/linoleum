@@ -14,7 +14,7 @@ Also supports completion with a similar interface to prompts; see [`Editor::comp
 use linoleum::{Editor, EditResult};
 
 fn main() {
-    let editor = Editor::new(" > ");
+    let mut editor = Editor::new(" > ");
     match editor.read().expect("Failed to read line") {
         EditResult::Ok(s) => println!("You entered: '{s}'"),
         EditResult::Cancel => println!("You canceled!"),
@@ -39,7 +39,7 @@ impl fmt::Display for Prompt {
 
 fn main() {
     let prompt = Prompt { template: " {greet}> ".to_string() };
-    let editor = Editor::new(prompt);
+    let mut editor = Editor::new(prompt);
 
     loop {
         match editor.read() {
