@@ -5,6 +5,7 @@ use std::io::{self, stdout, StdoutLock, Write};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventState, KeyModifiers};
 use crossterm::{cursor, queue, terminal};
+use regex_lite::Regex;
 
 mod history;
 pub use history::History;
@@ -198,11 +199,10 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
         let mut stdout = stdout().lock();
 
         let prompt = self.prompt.to_string();
-        let prompt_length = strip_ansi_escapes::strip(
-            &prompt.chars()
-                .filter(|ch| !ch.is_control())
-                .collect::<String>()
-        ).len();
+
+        let re = Regex::new("\x1b\\[([0-9,A-Z]{1,2}(;[0-9]{1,2})?(;[0-9]{1,3})?)?[m|K]?").unwrap();
+        let ansi_len = re.find_iter(&prompt).fold(0, |l, c| { l + c.len() });
+        let prompt_length = prompt.len() - ansi_len - prompt.chars().filter(|ch| *ch != '\x1b' && ch.is_control()).count();
 
         write!(stdout, "{}", prompt)?;
         stdout.flush()?;

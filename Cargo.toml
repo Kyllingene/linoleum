@@ -1,6 +1,6 @@
 [package]
 name = "linoleum"
-version = "2.3.0"
+version = "2.4.0"
 edition = "2021"
 
 license = "MIT"
@@ -10,5 +10,5 @@ repository = "https://github.com/Kyllingene/linoleum"
 
 [dependencies]
 crossterm = "0.27"
-strip-ansi-escapes = "0.2.0"
+regex-lite = "0.1.0"
 
