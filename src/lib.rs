@@ -12,6 +12,9 @@ pub use history::History;
 /// A highlighting scheme to apply to the user input.
 pub struct Highlight<'a>(pub &'a dyn Fn(&str) -> String);
 
+/// A completion function to apply to the user input.
+pub struct Completion<'a>(pub &'a dyn Fn(&str) -> Vec<String>);
+
 /// The default characters on which to break words.
 pub const WORD_BREAKS: &str = "-_=+[]{}()<>,./\\`'\";:!@#$%^&*?|~ ";
 
@@ -38,14 +41,15 @@ pub enum EditResult {
 ///     EditResult::Quit => std::process::exit(1),
 /// }
 /// ```
-pub struct Editor<'a, 'b, P: Display> {
+pub struct Editor<'a, 'b, 'c, P: Display> {
     prompt: P,
     word_breaks: &'a str,
-    highlight: Highlight<'b>,
+    highlight: Option<Highlight<'b>>,
     history: Option<History>,
+    completion: Option<Completion<'c>>,
 }
 
-impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
+impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
     /// Creates a new editor with empty highlight and default word breaks.
     ///
     /// Example:
@@ -57,8 +61,9 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
         Self {
             prompt,
             word_breaks: WORD_BREAKS,
-            highlight: Highlight(&|s| s.to_string()),
+            highlight: None,
             history: None,
+            completion: None,
         }
     }
 
@@ -91,7 +96,28 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
     ///     .highlight(Highlight(&|s| underline(s, "hello, world!")));
     /// ```
     pub fn highlight(mut self, highlight: Highlight<'b>) -> Self {
-        self.highlight = highlight;
+        self.highlight = Some(highlight);
+        self
+    }
+
+    /// Sets the completion function.
+    ///
+    /// Example:
+    /// ```
+    /// # use linoleum::{Editor, Highlight};
+    /// fn complete(s: &str) -> Vec<String> {
+    ///     let s = "hello".to_string();
+    ///     if s.starts_with(s) {
+    ///         vec![s]
+    ///     } else {
+    ///         Vec::new()
+    ///     }
+    /// }
+    /// let editor = Editor::new(" > ")
+    ///     .completion(Completion(&|s| ));
+    /// ```
+    pub fn completion(mut self, completion: Completion<'c>) -> Self {
+        self.completion = Some(completion);
         self
     }
 
@@ -166,8 +192,13 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
 
         let mut data = String::new();
         let mut cursor = 0;
+        
         let mut cursor_line = 0;
         let mut num_lines = 0;
+
+        let mut completion_length = 0;
+        let mut completions = Vec::<String>::new();
+        let mut completion_index = 0;
 
         loop {
             let ev = event::read();
@@ -185,7 +216,35 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
                     ^ key.state.contains(KeyEventState::CAPS_LOCK);
 
                 match key.code {
-                    KeyCode::Enter => break,
+                    KeyCode::Enter => {
+                        if completion_length != 0 {
+                            let old_cursor = cursor;
+                            cursor = self.find_word_boundary(&data, cursor, true);
+                            if self.word_breaks.contains(data.chars().nth(cursor).unwrap()) {
+                                cursor += 1;
+                            }
+
+                            data = data
+                                .chars()
+                                .take(cursor)
+                                .chain(data.chars().skip(old_cursor))
+                                .collect();
+
+                            data.insert_str(cursor, completions[completion_index].as_str());
+                            cursor += completions[completion_index].len();
+
+                            self.redraw(
+                                &mut stdout,
+                                &data,
+                                prompt_length,
+                                &mut cursor_line,
+                                &mut num_lines,
+                                cursor,
+                            )?;
+                        } else {
+                            break;
+                        }
+                    }
                     KeyCode::Backspace => {
                         if cursor != 0 {
                             cursor -= 1;
@@ -253,7 +312,26 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
                         }
                     }
                     KeyCode::Left => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        if completion_length != 0 {
+                            completion_index = completion_index.saturating_sub(1);
+
+                            self.clear_completions(
+                                &mut stdout,
+                                completion_length,
+                                cursor_line,
+                                num_lines,
+                            )?;
+
+                            completion_length = self.show_completions(
+                                &mut stdout,
+                                &completions,
+                                cursor_line,
+                                num_lines,
+                                completion_index,
+                            )?;
+
+                            self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
+                        } else if key.modifiers.contains(KeyModifiers::CONTROL) {
                             cursor = self.find_word_boundary(&data, cursor, true);
                             self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
                         } else if cursor != 0 {
@@ -262,7 +340,26 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
                         }
                     }
                     KeyCode::Right => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        if completion_length != 0 {
+                            completion_index = completion_index.saturating_add(1);
+
+                            self.clear_completions(
+                                &mut stdout,
+                                completion_length,
+                                cursor_line,
+                                num_lines,
+                            )?;
+
+                            completion_length = self.show_completions(
+                                &mut stdout,
+                                &completions,
+                                cursor_line,
+                                num_lines,
+                                completion_index,
+                            )?;
+
+                            self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
+                        } else if key.modifiers.contains(KeyModifiers::CONTROL) {
                             cursor = self.find_word_boundary(&data, cursor, false) + 1;
                             self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
                         } else if cursor != data.len() {
@@ -271,7 +368,26 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
                         }
                     }
                     KeyCode::Up => {
-                        if let Some(h) = &mut self.history {
+                        if completion_length != 0 {
+                            completion_index = completion_index.saturating_sub(2);
+
+                            self.clear_completions(
+                                &mut stdout,
+                                completion_length,
+                                cursor_line,
+                                num_lines,
+                            )?;
+
+                            completion_length = self.show_completions(
+                                &mut stdout,
+                                &completions,
+                                cursor_line,
+                                num_lines,
+                                completion_index,
+                            )?;
+
+                            self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
+                        } else if let Some(h) = &mut self.history {
                             if let Some(line) = h.up() {
                                 data = line;
                                 cursor = data.len();
@@ -287,7 +403,26 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
                         }
                     }
                     KeyCode::Down => {
-                        if let Some(h) = &mut self.history {
+                        if completion_length != 0 {
+                            completion_index = completion_index.saturating_add(2);
+
+                            self.clear_completions(
+                                &mut stdout,
+                                completion_length,
+                                cursor_line,
+                                num_lines,
+                            )?;
+
+                            completion_length = self.show_completions(
+                                &mut stdout,
+                                &completions,
+                                cursor_line,
+                                num_lines,
+                                completion_index,
+                            )?;
+
+                            self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
+                        } else if let Some(h) = &mut self.history {
                             if let Some(line) = h.down() {
                                 data = line;
                                 cursor = data.len();
@@ -321,20 +456,160 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
                         cursor = data.len();
                         self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
                     }
+                    KeyCode::Tab => {
+                        if let Some(c) = &self.completion {
+                            let word_start = self.find_word_boundary(&data, cursor, true);
+                            completions = (c.0)(&data[word_start..cursor]);
+                        } else {
+                            continue;
+                        }
+
+                        if completion_length != 0 {
+                            self.clear_completions(
+                                &mut stdout,
+                                completion_length,
+                                cursor_line,
+                                num_lines,
+                            )?;
+                        }
+
+                        completion_length = self.show_completions(
+                            &mut stdout,
+                            &completions,
+                            cursor_line,
+                            num_lines,
+                            completion_index,
+                        )?;
+
+                        self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
+                    }
                     _ => {}
+                }
+
+                if completion_length != 0
+                    && !matches!(
+                        key.code,
+                        KeyCode::Tab | KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
+                    )
+                {
+                    self.clear_completions(&mut stdout, completion_length, cursor_line, num_lines)?;
+                    completion_length = 0;
+                    completion_index = 0;
                 }
             }
         }
 
         terminal::disable_raw_mode()?;
         self.reset_history_index();
-        
+
         if let Some(h) = &mut self.history {
             h.push(data.clone());
         }
 
         writeln!(stdout)?;
         Ok(EditResult::Ok(data))
+    }
+
+    fn clear_completions(
+        &self,
+        stdout: &mut StdoutLock,
+        completion_length: u16,
+        cursor_line: u16,
+        num_lines: u16,
+    ) -> io::Result<()> {
+        if completion_length == 0 {
+            return Ok(());
+        }
+
+        let n = num_lines - cursor_line;
+
+        if n != 0 {
+            queue!(stdout, cursor::MoveDown(n))?;
+        }
+
+        for _ in 0..completion_length {
+            queue!(
+                stdout,
+                cursor::MoveDown(1),
+                terminal::Clear(terminal::ClearType::CurrentLine),
+            )?;
+        }
+
+        queue!(stdout, cursor::MoveUp(completion_length))?;
+
+        if n != 0 {
+            queue!(stdout, cursor::MoveUp(n),)?;
+        }
+
+        stdout.flush()
+    }
+
+    fn show_completions(
+        &self,
+        stdout: &mut StdoutLock,
+        completions: &[String],
+        cursor_line: u16,
+        num_lines: u16,
+        completion_index: usize,
+    ) -> io::Result<u16> {
+        if completions.is_empty() {
+            return Ok(0);
+        }
+
+        let n = num_lines - cursor_line;
+
+        if n != 0 {
+            queue!(stdout, cursor::MoveDown(n))?;
+        }
+
+        let mut width = 0;
+        for c in completions.chunks(2) {
+            let l = &c[0];
+            let r = c.get(1);
+
+            width = width.max(l.len() + r.map_or(0, |s| s.len()));
+        }
+
+        let completions = completions.chunks(2);
+
+        let mut moved = 0;
+        let mut idx = 0;
+        for c in completions {
+            let l = &c[0];
+            let r = c.get(1);
+
+            write!(
+                stdout,
+                "\r\n {}{l:0width$}\x1b[0m",
+                if idx == completion_index { "\x1b[38;5;6m" } else { "" },
+                width = width - r.map_or(0, |s| s.len()),
+            )?;
+
+            idx += 1;
+
+            if let Some(r) = r {
+                write!(
+                    stdout,
+                    " {}{r}\x1b[0m",
+                    if idx == completion_index { "\x1b[38;5;6m" } else { "" },
+                )?;
+            }
+
+            idx += 1;
+            moved += 1;
+        }
+
+        if moved != 0 {
+            queue!(stdout, cursor::MoveUp(moved))?;
+        }
+
+        if n != 0 {
+            queue!(stdout, cursor::MoveUp(n),)?;
+        }
+
+        stdout.flush()?;
+
+        Ok(moved)
     }
 
     /// Finds a word boundary.
@@ -345,12 +620,17 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
         } else {
             (1, data.len() as i64 - 1)
         };
+
         let mut i = start as i64;
 
         while i != stop {
             i += step;
 
             if self.word_breaks.contains(chars[i as usize]) {
+                if start as i64 - i > 1 {
+                    i -= step;
+                }
+
                 break;
             }
         }
@@ -396,8 +676,13 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
     ) -> io::Result<()> {
         self.clear(stdout, prompt_length, *cursor_line, *num_lines)?;
 
-        let highlighted = (self.highlight.0)(data);
-        let mut data = highlighted.as_str();
+        let data = if let Some(h) = &self.highlight {
+            (h.0)(data)
+        } else {
+            data.to_string()
+        };
+
+        let mut data = data.as_str();
 
         let size = terminal::size()?.0;
 
@@ -485,7 +770,7 @@ impl<'a, 'b, P: Display> Editor<'a, 'b, P> {
     }
 }
 
-impl<'a, 'b, P: Display> Drop for Editor<'a, 'b, P> {
+impl<'a, 'b, 'c, P: Display> Drop for Editor<'a, 'b, 'c, P> {
     fn drop(&mut self) {
         self.save_history().expect("failed to save history");
     }

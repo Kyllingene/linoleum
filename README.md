@@ -4,7 +4,9 @@ Linoleum is a line editor designed for use in the [`gosh` shell](https://github.
 
 It supports Ctrl-C/-D/-Left/-Right/-Backspace, all out of the box. The characters used to break words by the latter three are fully configurable.
 
-History is not yet implemented, but is a top priority (since it's being used in a shell). Completion will also be supported via configurable completion function, similar to how prompts work now.
+Supports history optionally, saving when the editor is dropped (or before, if you use [`Editor::save_history`]).
+
+Also supports completion with a similar interface to prompts; see [`Editor::completion`].
 
 ## Examples
 

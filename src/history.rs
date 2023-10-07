@@ -1,5 +1,5 @@
-use std::io::{self, Read, ErrorKind, Write};
 use std::fs::{File, OpenOptions};
+use std::io::{self, ErrorKind, Read, Write};
 
 pub struct History {
     lines: Vec<String>,
@@ -14,7 +14,9 @@ impl History {
         let mut lines = String::new();
 
         match File::open(&file_path) {
-            Ok(mut f) => { f.read_to_string(&mut lines)?; }
+            Ok(mut f) => {
+                f.read_to_string(&mut lines)?;
+            }
             Err(e) => {
                 if e.kind() != ErrorKind::NotFound {
                     return Err(e);
@@ -74,4 +76,3 @@ impl History {
         }
     }
 }
-
