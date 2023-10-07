@@ -13,7 +13,10 @@ pub use history::History;
 pub struct Highlight<'a>(pub &'a dyn Fn(&str) -> String);
 
 /// A completion function to apply to the user input.
-pub struct Completion<'a>(pub &'a dyn Fn(&str) -> Vec<String>);
+///
+/// The arguments are the input, the start of the selection, and the end.
+/// The selection will be replaced in its entirety.
+pub struct Completion<'a>(pub &'a dyn Fn(&str, usize, usize) -> Vec<String>);
 
 /// The default characters on which to break words.
 pub const WORD_BREAKS: &str = "-_=+[]{}()<>,./\\`'\";:!@#$%^&*?|~ ";
@@ -105,7 +108,7 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
     /// Example:
     /// ```
     /// # use linoleum::{Editor, Completion};
-    /// fn complete(s: &str) -> Vec<String> {
+    /// fn complete(s: &str, _start: usize, _end: usize) -> Vec<String> {
     ///     let s = "hello".to_string();
     ///     if s.starts_with(&s) {
     ///         vec![s]
@@ -469,7 +472,7 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
                     KeyCode::Tab => {
                         if let Some(c) = &self.completion {
                             let word_start = self.find_space_boundary(&data, cursor, true);
-                            completions = (c.0)(&data[word_start..cursor]);
+                            completions = (c.0)(&data, word_start, cursor);
                         } else {
                             continue;
                         }
