@@ -198,7 +198,12 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
         let mut stdout = stdout().lock();
 
         let prompt = self.prompt.to_string();
-        let prompt_length = prompt.len();
+        let prompt_length = strip_ansi_escapes::strip(
+            &prompt.chars()
+                .filter(|ch| !ch.is_control())
+                .collect::<String>()
+        ).len();
+
         write!(stdout, "{}", prompt)?;
         stdout.flush()?;
         terminal::enable_raw_mode()?;
