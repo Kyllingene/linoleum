@@ -45,11 +45,11 @@ pub enum EditResult {
 /// }
 /// ```
 pub struct Editor<'a, 'b, 'c, P: Display> {
-    prompt: P,
-    word_breaks: &'a str,
-    highlight: Option<Highlight<'b>>,
-    history: Option<History>,
-    completion: Option<Completion<'c>>,
+    pub prompt: P,
+    pub word_breaks: &'a str,
+    pub highlight: Option<Highlight<'b>>,
+    pub history: Option<History>,
+    pub completion: Option<Completion<'c>>,
 }
 
 impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
