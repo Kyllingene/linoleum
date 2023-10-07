@@ -219,7 +219,7 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
                     KeyCode::Enter => {
                         if completion_length != 0 {
                             let old_cursor = cursor;
-                            cursor = self.find_word_boundary(&data, cursor, true);
+                            cursor = self.find_space_boundary(&data, cursor, true);
                             if self.word_breaks.contains(data.chars().nth(cursor).unwrap()) {
                                 cursor += 1;
                             }
@@ -458,7 +458,7 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
                     }
                     KeyCode::Tab => {
                         if let Some(c) = &self.completion {
-                            let word_start = self.find_word_boundary(&data, cursor, true);
+                            let word_start = self.find_space_boundary(&data, cursor, true);
                             completions = (c.0)(&data[word_start..cursor]);
                         } else {
                             continue;
@@ -610,6 +610,32 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
         stdout.flush()?;
 
         Ok(moved)
+    }
+
+    /// Finds a word boundary, but only delimited by spaces.
+    fn find_space_boundary(&self, data: &str, start: usize, backwards: bool) -> usize {
+        let chars: Vec<char> = data.chars().collect();
+        let (step, stop) = if backwards {
+            (-1, 0)
+        } else {
+            (1, data.len() as i64 - 1)
+        };
+
+        let mut i = start as i64;
+
+        while i != stop {
+            i += step;
+
+            if chars[i as usize] == ' ' {
+                if start as i64 - i > 1 {
+                    i -= step;
+                }
+
+                break;
+            }
+        }
+
+        i as usize
     }
 
     /// Finds a word boundary.

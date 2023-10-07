@@ -1,12 +1,12 @@
 # Linoleum
 
-Linoleum is a line editor designed for use in the [`gosh` shell](https://github.com/Kyllingene/gosh). It's ergonomic, both on the developer side and the user side.
+Linoleum is a smooth line editor designed for use in the [`gosh` shell](https://github.com/Kyllingene/gosh). It's ergonomic, both on the developer side and the user side.
 
-It supports Ctrl-C/-D/-Left/-Right/-Backspace, all out of the box. The characters used to break words by the latter three are fully configurable.
+It supports Ctrl-C/-D/-Left/-Right/-Backspace, all out of the box. The characters used by the latter three to delimit words are fully configurable.
 
 Supports history optionally, saving when the editor is dropped (or before, if you use [`Editor::save_history`]).
 
-Also supports completion with a similar interface to prompts; see [`Editor::completion`].
+Also supports completion with a similar interface to prompts; see [`Editor::completion`]. Note that completions only respect spaces, not the usual word breaks; this is because some (i.e. file) completions may require more license.
 
 ## Examples
 
