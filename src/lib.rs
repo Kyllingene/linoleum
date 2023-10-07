@@ -201,8 +201,13 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
         let prompt = self.prompt.to_string();
 
         let re = Regex::new("\x1b\\[([0-9,A-Z]{1,2}(;[0-9]{1,2})?(;[0-9]{1,3})?)?[m|K]?").unwrap();
-        let ansi_len = re.find_iter(&prompt).fold(0, |l, c| { l + c.len() });
-        let prompt_length = prompt.len() - ansi_len - prompt.chars().filter(|ch| *ch != '\x1b' && ch.is_control()).count();
+        let ansi_len = re.find_iter(&prompt).fold(0, |l, c| l + c.len());
+        let prompt_length = prompt.len()
+            - ansi_len
+            - prompt
+                .chars()
+                .filter(|ch| *ch != '\x1b' && ch.is_control())
+                .count();
 
         write!(stdout, "{}", prompt)?;
         stdout.flush()?;
