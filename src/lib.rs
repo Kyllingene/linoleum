@@ -150,7 +150,7 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
     }
 
     /// Resets the history cursor.
-    /// See [`History::reset_history_index`].
+    /// See [`History::reset_index`].
     pub fn reset_history_index(&mut self) {
         if let Some(h) = &mut self.history {
             h.reset_index();
