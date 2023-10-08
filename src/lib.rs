@@ -5,7 +5,7 @@ use std::io::{self, stdout, StdoutLock, Write};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventState, KeyModifiers};
 use crossterm::{cursor, queue, terminal};
-use regex_lite::Regex;
+use antsy::AnsiStr;
 
 mod history;
 pub use history::History;
@@ -199,15 +199,7 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
         let mut stdout = stdout().lock();
 
         let prompt = self.prompt.to_string();
-
-        let re = Regex::new("\x1b\\[([0-9,A-Z]{1,2}(;[0-9]{1,2})?(;[0-9]{1,3})?)?[m|K]?").unwrap();
-        let ansi_len = re.find_iter(&prompt).fold(0, |l, c| l + c.len());
-        let prompt_length = prompt.len()
-            - ansi_len
-            - prompt
-                .chars()
-                .filter(|ch| *ch != '\x1b' && ch.is_control())
-                .count();
+        let prompt_length = AnsiStr::new(&prompt).len();
 
         write!(stdout, "{}", prompt)?;
         stdout.flush()?;
@@ -243,8 +235,10 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
                         if completion_length != 0 {
                             let old_cursor = cursor;
                             cursor = self.find_space_boundary(&data, cursor, true);
-                            if self.word_breaks.contains(data.chars().nth(cursor).unwrap()) {
-                                cursor += 1;
+                            if let Some(ch) = data.chars().nth(cursor) {
+                                if self.word_breaks.contains(ch) {
+                                    cursor += 1;
+                                }
                             }
 
                             data = data
@@ -722,6 +716,8 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
         stdout.flush()
     }
 
+    /// Redraws the user input, updating the cursor_line and num_lines
+    /// variables appropriately.
     fn redraw(
         &self,
         stdout: &mut StdoutLock,
@@ -733,31 +729,34 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
     ) -> io::Result<()> {
         self.clear(stdout, prompt_length, *cursor_line, *num_lines)?;
 
+        let data_length = data.len();
         let data = if let Some(h) = &self.highlight {
             (h.0)(data)
         } else {
             data.to_string()
         };
 
-        let mut data = data.as_str();
+
+        let ansi_str = AnsiStr::new(&data);
+        let mut data = 0..ansi_str.len();
 
         let size = terminal::size()?.0;
 
-        let mut cap = (size as usize - prompt_length).min(data.len());
-        write!(stdout, "{}", &data[0..cap])?;
+        let mut cap = ansi_str.len().min(size as usize - prompt_length);
+        write!(stdout, "{}", ansi_str.get(data.start..cap))?;
 
         *num_lines = 0;
         *cursor_line = 0;
-        let length = data.len() + prompt_length;
+        let length = data_length + prompt_length;
         if length > size as usize {
             loop {
-                data = &data[cap..];
+                data = cap..ansi_str.len();
                 if data.is_empty() {
                     break;
                 }
 
-                cap = (size as usize).min(data.len());
-                write!(stdout, "\r\n{}", &data[0..cap])?;
+                cap = data_length.min(size as usize);
+                write!(stdout, "\r\n{}", ansi_str.get(data.start..cap))?;
                 *num_lines += 1;
                 *cursor_line += 1;
             }
@@ -775,7 +774,7 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
                 queue!(stdout, cursor::MoveDown(m))?;
                 *cursor_line += m;
             }
-        } else if length == size as usize && end == data.len() {
+        } else if length == size as usize && end == data_length {
             queue!(stdout, cursor::MoveDown(1), cursor::MoveToColumn(0))?;
 
             *num_lines += 1;

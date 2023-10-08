@@ -1,6 +1,6 @@
 [package]
 name = "linoleum"
-version = "2.4.0"
+version = "2.4.1"
 edition = "2021"
 
 license = "MIT"
@@ -9,6 +9,6 @@ description = "A simple but ergonomic line editor."
 repository = "https://github.com/Kyllingene/linoleum"
 
 [dependencies]
+antsy = "1.0.0"
 crossterm = "0.27"
-regex-lite = "0.1.0"
 
