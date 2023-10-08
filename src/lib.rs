@@ -278,6 +278,10 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
                     }
                     KeyCode::Char(mut ch) => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
+                            if completion_length != 0 {
+                                self.clear_completions(&mut stdout, completion_length, cursor_line, num_lines)?;
+                            }
+
                             if ch == 'h' {
                                 let old_cursor = cursor;
                                 cursor = self.find_word_boundary(&data, cursor, true);
