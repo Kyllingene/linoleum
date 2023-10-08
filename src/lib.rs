@@ -11,13 +11,31 @@ mod history;
 pub use history::History;
 
 /// A highlighting scheme to apply to the user input.
-pub struct Highlight<'a>(pub &'a dyn Fn(&str) -> String);
+///
+/// The input is the current user-inputted data.
+pub trait Highlight {
+    fn highlight(&mut self, data: &str) -> String;
+}
+
+impl<F: Fn(&str) -> String> Highlight for F {
+    fn highlight(&mut self, data: &str) -> String {
+        (self)(data)
+    }
+}
 
 /// A completion function to apply to the user input.
 ///
 /// The arguments are the input, the start of the selection, and the end.
 /// The selection will be replaced in its entirety.
-pub struct Completion<'a>(pub &'a dyn Fn(&str, usize, usize) -> Vec<String>);
+pub trait Completion {
+    fn complete(&mut self, data: &str, start: usize, end: usize) -> Vec<String>;
+}
+
+impl <F: Fn(&str, usize, usize) -> Vec<String>> Completion for F {
+    fn complete(&mut self, data: &str, start: usize, end: usize) -> Vec<String> {
+        (self)(data, start, end)
+    }
+}
 
 /// The default characters on which to break words.
 pub const WORD_BREAKS: &str = "-_=+[]{}()<>,./\\`'\";:!@#$%^&*?|~ ";
@@ -32,8 +50,6 @@ pub enum EditResult {
 
 /// A line editor.
 ///
-/// Ctrl-C returns an [`EditResult::Cancel`];
-/// Ctrl-D returns an [`EditResult::Quit`].
 ///
 /// Example:
 /// ```no_run
@@ -45,15 +61,15 @@ pub enum EditResult {
 ///     EditResult::Quit => std::process::exit(1),
 /// }
 /// ```
-pub struct Editor<'a, 'b, 'c, P: Display> {
+pub struct Editor<'a, P: Display, H: Highlight = fn(&str) -> String, C: Completion = fn(&str, usize, usize) -> Vec<String>> {
     pub prompt: P,
     pub word_breaks: &'a str,
-    pub highlight: Option<Highlight<'b>>,
+    pub highlight: Option<H>,
     pub history: Option<History>,
-    pub completion: Option<Completion<'c>>,
+    pub completion: Option<C>,
 }
 
-impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
+impl<'a, P: Display> Editor<'a, P, fn(&str) -> String, fn(&str, usize, usize) -> Vec<String>> {
     /// Creates a new editor with empty highlight and default word breaks.
     ///
     /// Example:
@@ -70,7 +86,9 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
             completion: None,
         }
     }
+}
 
+impl<'a, P: Display, H: Highlight, C: Completion> Editor<'a, P, H, C> {
     /// Sets the word break characters the editor respects.
     ///
     /// Example:
@@ -89,19 +107,27 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
     ///
     /// Example:
     /// ```
-    /// # use linoleum::{Editor, Highlight};
-    /// fn underline(s: &str, pat: &str) -> String {
-    ///     // ...
-    ///     # s.to_string()
+    /// # use linoleum::Editor;
+    /// struct Highlight;
+    ///
+    /// impl linoleum::Highlight for Highlight {
+    ///     fn highlight(&mut self, data: &str) -> String {
+    ///         data.replace("foo", "bar")
+    ///     }
     /// }
     ///
-    /// // Create a new editor with a highlighter.
+    /// // Create a new editor with a custom highlighter.
     /// let editor = Editor::new(" > ")
-    ///     .highlight(Highlight(&|s| underline(s, "hello, world!")));
+    ///     .highlight(Highlight);
     /// ```
-    pub fn highlight(mut self, highlight: Highlight<'b>) -> Self {
-        self.highlight = Some(highlight);
-        self
+    pub fn highlight<NH: Highlight>(self, highlight: NH) -> Editor<'a, P, NH, C> {
+        Editor {
+            prompt: self.prompt,
+            word_breaks: self.word_breaks,
+            highlight: Some(highlight),
+            history: self.history,
+            completion: self.completion,
+        }
     }
 
     /// Sets the completion function.
@@ -117,12 +143,18 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
     ///         Vec::new()
     ///     }
     /// }
+    ///
     /// let editor = Editor::new(" > ")
-    ///     .completion(Completion(&complete));
+    ///     .completion(complete);
     /// ```
-    pub fn completion(mut self, completion: Completion<'c>) -> Self {
-        self.completion = Some(completion);
-        self
+    pub fn completion<NC: Completion>(self, completion: NC) -> Editor<'a, P, H, NC> {
+        Editor {
+            prompt: self.prompt,
+            word_breaks: self.word_breaks,
+            highlight: self.highlight,
+            history: self.history,
+            completion: Some(completion),
+        }
     }
 
     /// Updates the prompt of the editor.
@@ -184,6 +216,9 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
     ///
     /// Precedes with prompt. Enters terminal raw mode for the duration
     /// of the read.
+    ///
+    /// Ctrl-C returns an [`EditResult::Cancel`];
+    /// Ctrl-D returns an [`EditResult::Quit`].
     ///
     /// Example:
     /// ```no_run
@@ -478,9 +513,9 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
                         self.move_to(&mut stdout, prompt_length, &mut cursor_line, cursor)?;
                     }
                     KeyCode::Tab => {
-                        if let Some(c) = &self.completion {
-                            let word_start = self.find_space_boundary(&data, cursor, true);
-                            completions = (c.0)(&data, word_start, cursor);
+                        let word_start = self.find_space_boundary(&data, cursor, true);
+                        if let Some(c) = &mut self.completion {
+                            completions = c.complete(&data, word_start, cursor);
                         } else {
                             continue;
                         }
@@ -723,7 +758,7 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
     /// Redraws the user input, updating the cursor_line and num_lines
     /// variables appropriately.
     fn redraw(
-        &self,
+        &mut self,
         stdout: &mut StdoutLock,
         data: &str,
         prompt_length: usize,
@@ -734,8 +769,8 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
         self.clear(stdout, prompt_length, *cursor_line, *num_lines)?;
 
         let data_length = data.len();
-        let data = if let Some(h) = &self.highlight {
-            (h.0)(data)
+        let data = if let Some(h) = &mut self.highlight {
+            h.highlight(data)
         } else {
             data.to_string()
         };
@@ -830,8 +865,8 @@ impl<'a, 'b, 'c, P: Display> Editor<'a, 'b, 'c, P> {
     }
 }
 
-impl<'a, 'b, 'c, P: Display> Drop for Editor<'a, 'b, 'c, P> {
-    fn drop(&mut self) {
-        self.save_history().expect("failed to save history");
-    }
-}
+// impl<'a, P: Display, H: Highlight, C: Completion> Drop for Editor<'a, P, H, C> {
+    // fn drop(&mut self) {
+        // self.save_history().expect("failed to save history");
+    // }
+// }

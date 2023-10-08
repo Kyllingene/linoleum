@@ -4,7 +4,7 @@ Linoleum is a smooth line editor designed for use in the [`gosh` shell](https://
 
 It supports Ctrl-C/-D/-Left/-Right/-Backspace, all out of the box. The characters used by the latter three to delimit words are fully configurable.
 
-Supports history optionally, saving when the editor is dropped (or before, if you use [`Editor::save_history`]).
+Supports history. Make sure to run [`Editor::save_history`] before dropping the `History`.
 
 Also supports completion with a similar interface to prompts; see [`Editor::completion`]. Note that completions only respect spaces, not the usual word breaks; this is because some (i.e. file) completions may require more license.
 
@@ -37,9 +37,18 @@ impl fmt::Display for Prompt {
     }
 }
 
+struct Highlight;
+
+impl linoleum::Highlight for Highlight {
+    fn highlight(&mut self, data: &str) -> String {
+        data.replace("foo", "bar")
+    }
+}
+
 fn main() {
     let prompt = Prompt { template: " {greet}> ".to_string() };
-    let mut editor = Editor::new(prompt);
+    let mut editor = Editor::new(prompt)
+        .highlight(Highlight);
 
     loop {
         match editor.read() {
