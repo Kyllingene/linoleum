@@ -65,8 +65,8 @@ pub enum EditResult {
 pub struct Editor<
     'a,
     P: Display,
-    H: Highlight = fn(&str) -> String,
-    C: Completion = fn(&str, usize, usize) -> Vec<String>,
+    H: Highlight = &'static fn(&str) -> String,
+    C: Completion = &'static fn(&str, usize, usize) -> Vec<String>,
 > {
     pub prompt: P,
     pub word_breaks: &'a str,
