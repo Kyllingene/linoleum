@@ -65,8 +65,8 @@ pub enum EditResult {
 pub struct Editor<
     'a,
     P: Display,
-    H: Highlight = &'static fn(&str) -> String,
-    C: Completion = &'static fn(&str, usize, usize) -> Vec<String>,
+    H: Highlight = fn(&str) -> String,
+    C: Completion = fn(&str, usize, usize) -> Vec<String>,
 > {
     pub prompt: P,
     pub word_breaks: &'a str,
@@ -75,7 +75,7 @@ pub struct Editor<
     pub completion: Option<C>,
 }
 
-impl<P: Display> Editor<'static, P, &'static fn(&str) -> String, &'static fn(&str, usize, usize) -> Vec<String>> {
+impl<P: Display> Editor<'static, P, fn(&str) -> String, fn(&str, usize, usize) -> Vec<String>> {
     /// Creates a new editor with empty highlight and default word breaks.
     ///
     /// Example:
