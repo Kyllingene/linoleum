@@ -1,11 +1,12 @@
 #![cfg_attr(not(doctest), doc = include_str!("../README.md"))]
+#![cfg_attr(any(test, doctest), allow(unused))]
 
 use std::fmt::Display;
 use std::io::{self, stdout, StdoutLock, Write};
 
+use antsy::AnsiStr;
 use crossterm::event::{self, Event, KeyCode, KeyEventState, KeyModifiers};
 use crossterm::{cursor, queue, terminal};
-use antsy::AnsiStr;
 
 mod history;
 pub use history::History;
@@ -31,7 +32,7 @@ pub trait Completion {
     fn complete(&mut self, data: &str, start: usize, end: usize) -> Vec<String>;
 }
 
-impl <F: Fn(&str, usize, usize) -> Vec<String>> Completion for F {
+impl<F: Fn(&str, usize, usize) -> Vec<String>> Completion for F {
     fn complete(&mut self, data: &str, start: usize, end: usize) -> Vec<String> {
         (self)(data, start, end)
     }
@@ -52,7 +53,7 @@ pub enum EditResult {
 ///
 ///
 /// Example:
-/// ```no_run
+/// ```
 /// # use linoleum::{Editor, EditResult};
 /// let mut editor = Editor::new(" > ");
 /// match editor.read().expect("Failed to read line") {
@@ -61,7 +62,12 @@ pub enum EditResult {
 ///     EditResult::Quit => std::process::exit(1),
 /// }
 /// ```
-pub struct Editor<'a, P: Display, H: Highlight = fn(&str) -> String, C: Completion = fn(&str, usize, usize) -> Vec<String>> {
+pub struct Editor<
+    'a,
+    P: Display,
+    H: Highlight = fn(&str) -> String,
+    C: Completion = fn(&str, usize, usize) -> Vec<String>,
+> {
     pub prompt: P,
     pub word_breaks: &'a str,
     pub highlight: Option<H>,
@@ -69,7 +75,7 @@ pub struct Editor<'a, P: Display, H: Highlight = fn(&str) -> String, C: Completi
     pub completion: Option<C>,
 }
 
-impl<'a, P: Display> Editor<'a, P, fn(&str) -> String, fn(&str, usize, usize) -> Vec<String>> {
+impl<P: Display> Editor<'static, P, fn(&str) -> String, fn(&str, usize, usize) -> Vec<String>> {
     /// Creates a new editor with empty highlight and default word breaks.
     ///
     /// Example:
@@ -98,9 +104,14 @@ impl<'a, P: Display, H: Highlight, C: Completion> Editor<'a, P, H, C> {
     /// let editor = Editor::new(" > ")
     ///     .word_breaks("");
     /// ```
-    pub fn word_breaks(mut self, word_breaks: &'a str) -> Self {
-        self.word_breaks = word_breaks;
-        self
+    pub fn word_breaks<'na>(self, word_breaks: &'na str) -> Editor<'na, P, H, C> {
+        Editor {
+            prompt: self.prompt,
+            word_breaks,
+            highlight: self.highlight,
+            history: self.history,
+            completion: self.completion,
+        }
     }
 
     /// Sets the highlighter of the editor.
@@ -136,9 +147,9 @@ impl<'a, P: Display, H: Highlight, C: Completion> Editor<'a, P, H, C> {
     /// ```
     /// # use linoleum::{Editor, Completion};
     /// fn complete(s: &str, _start: usize, _end: usize) -> Vec<String> {
-    ///     let s = "hello".to_string();
-    ///     if s.starts_with(&s) {
-    ///         vec![s]
+    ///     let hello = "hello".to_string();
+    ///     if s.starts_with(&hello) {
+    ///         vec![hello]
     ///     } else {
     ///         Vec::new()
     ///     }
@@ -175,7 +186,7 @@ impl<'a, P: Display, H: Highlight, C: Completion> Editor<'a, P, H, C> {
     /// Opens and reads the file immediately.
     ///
     /// Example:
-    /// ```no_run
+    /// ```
     /// # use linoleum::Editor;
     /// let editor = Editor::new(" > ")
     ///     .history("~/.history", 1000)
@@ -189,7 +200,7 @@ impl<'a, P: Display, H: Highlight, C: Completion> Editor<'a, P, H, C> {
     /// Resets the history index to the most recent.
     ///
     /// Example:
-    /// ```no_run
+    /// ```
     /// # use linoleum::Editor;
     /// let mut editor = Editor::new(" > ")
     ///     .history("~/.history", 1000)
@@ -221,7 +232,7 @@ impl<'a, P: Display, H: Highlight, C: Completion> Editor<'a, P, H, C> {
     /// Ctrl-D returns an [`EditResult::Quit`].
     ///
     /// Example:
-    /// ```no_run
+    /// ```
     /// # use linoleum::{Editor, EditResult};
     /// let mut editor = Editor::new(" > ");
     /// match editor.read().expect("Failed to read line") {
@@ -230,6 +241,7 @@ impl<'a, P: Display, H: Highlight, C: Completion> Editor<'a, P, H, C> {
     ///     EditResult::Quit => std::process::exit(1),
     /// }
     /// ```
+    #[cfg(not(any(test, doctest)))]
     pub fn read(&mut self) -> io::Result<EditResult> {
         let mut stdout = stdout().lock();
 
@@ -314,7 +326,12 @@ impl<'a, P: Display, H: Highlight, C: Completion> Editor<'a, P, H, C> {
                     KeyCode::Char(mut ch) => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
                             if completion_length != 0 {
-                                self.clear_completions(&mut stdout, completion_length, cursor_line, num_lines)?;
+                                self.clear_completions(
+                                    &mut stdout,
+                                    completion_length,
+                                    cursor_line,
+                                    num_lines,
+                                )?;
                             }
 
                             if ch == 'h' {
@@ -566,6 +583,11 @@ impl<'a, P: Display, H: Highlight, C: Completion> Editor<'a, P, H, C> {
         Ok(EditResult::Ok(data))
     }
 
+    #[cfg(any(test, doctest))]
+    pub fn read(&mut self) -> io::Result<EditResult> {
+        return Ok(EditResult::Quit);
+    }
+
     fn clear_completions(
         &self,
         stdout: &mut StdoutLock,
@@ -775,7 +797,6 @@ impl<'a, P: Display, H: Highlight, C: Completion> Editor<'a, P, H, C> {
             data.to_string()
         };
 
-
         let ansi_str = AnsiStr::new(&data);
         let mut data = 0..ansi_str.len();
 
@@ -866,7 +887,7 @@ impl<'a, P: Display, H: Highlight, C: Completion> Editor<'a, P, H, C> {
 }
 
 // impl<'a, P: Display, H: Highlight, C: Completion> Drop for Editor<'a, P, H, C> {
-    // fn drop(&mut self) {
-        // self.save_history().expect("failed to save history");
-    // }
+// fn drop(&mut self) {
+// self.save_history().expect("failed to save history");
+// }
 // }
