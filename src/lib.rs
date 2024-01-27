@@ -1,4 +1,4 @@
-#![cfg_attr(not(doctest), doc = include_str!("../README.md"))]
+#![doc = include_str!("../README.md")]
 #![cfg_attr(any(test, doctest), allow(unused))]
 
 use std::fmt::Display;
@@ -55,7 +55,7 @@ pub enum EditResult {
 ///
 ///
 /// Example:
-/// ```
+/// ```no_run
 /// # use linoleum::{Editor, EditResult};
 /// let mut editor = Editor::new(" > ");
 /// match editor.read().expect("Failed to read line") {
@@ -74,8 +74,8 @@ pub struct Editor<
     pub word_breaks: &'a str,
     // pub highlight: Option<H>,
     // pub completion: Option<C>,
-    pub highlight: Option<fn (&str) -> String>,
-    pub completion: Option<fn (&str, usize, usize) -> Vec<String>>,
+    pub highlight: Option<fn(&str) -> String>,
+    pub completion: Option<fn(&str, usize, usize) -> Vec<String>>,
     pub history: Option<History>,
 }
 
@@ -126,17 +126,10 @@ impl<'a, P: Display> Editor<'a, P> {
     /// Example:
     /// ```
     /// # use linoleum::Editor;
-    /// struct Highlight;
-    ///
-    /// impl linoleum::Highlight for Highlight {
-    ///     fn highlight(&mut self, data: &str) -> String {
-    ///         data.replace("foo", "bar")
-    ///     }
-    /// }
     ///
     /// // Create a new editor with a custom highlighter.
     /// let editor = Editor::new(" > ")
-    ///     .highlight(Highlight);
+    ///     .highlight(|data| data.replace("foo", "bar"));
     /// ```
     // pub fn highlight<NH: Highlight>(self, highlight: NH) -> Editor<'a, P, NH, C> {
     pub fn highlight(self, highlight: Highlight) -> Self {
@@ -241,7 +234,7 @@ impl<'a, P: Display> Editor<'a, P> {
     /// Ctrl-D returns an [`EditResult::Quit`].
     ///
     /// Example:
-    /// ```
+    /// ```no_run
     /// # use linoleum::{Editor, EditResult};
     /// let mut editor = Editor::new(" > ");
     /// match editor.read().expect("Failed to read line") {
@@ -250,7 +243,6 @@ impl<'a, P: Display> Editor<'a, P> {
     ///     EditResult::Quit => std::process::exit(1),
     /// }
     /// ```
-    #[cfg(not(any(test, doctest)))]
     pub fn read(&mut self) -> io::Result<EditResult> {
         let mut stdout = stdout().lock();
 
@@ -591,11 +583,6 @@ impl<'a, P: Display> Editor<'a, P> {
 
         writeln!(stdout)?;
         Ok(EditResult::Ok(data))
-    }
-
-    #[cfg(any(test, doctest))]
-    pub fn read(&mut self) -> io::Result<EditResult> {
-        return Ok(EditResult::Quit);
     }
 
     fn clear_completions(

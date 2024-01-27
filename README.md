@@ -10,7 +10,7 @@ Also supports completion with a similar interface to prompts; see [`Editor::comp
 
 ## Examples
 
-```rust
+```rust,no_run
 use linoleum::{Editor, EditResult};
 
 fn main() {
@@ -23,7 +23,7 @@ fn main() {
 }
 ```
 
-```rust
+```rust,no_run
 use std::fmt;
 use linoleum::{Editor, EditResult};
 
@@ -37,18 +37,12 @@ impl fmt::Display for Prompt {
     }
 }
 
-struct Highlight;
-
-impl linoleum::Highlight for Highlight {
-    fn highlight(&mut self, data: &str) -> String {
-        data.replace("foo", "bar")
-    }
-}
-
 fn main() {
     let prompt = Prompt { template: " {greet}> ".to_string() };
     let mut editor = Editor::new(prompt)
-        .highlight(Highlight);
+        .highlight(
+            |data| data.replace("foo", "bar")
+        );
 
     loop {
         match editor.read() {
