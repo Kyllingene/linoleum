@@ -15,30 +15,12 @@ pub use history::History;
 ///
 /// The input is the current user-inputted data.
 pub type Highlight = fn(&str) -> String;
-// pub trait Highlight {
-//     fn highlight(&mut self, data: &str) -> String;
-// }
-
-// impl<F: Fn(&str) -> String> Highlight for F {
-//     fn highlight(&mut self, data: &str) -> String {
-//         (self)(data)
-//     }
-// }
 
 /// A completion function to apply to the user input.
 ///
 /// The arguments are the input, the start of the selection, and the end.
 /// The selection will be replaced in its entirety.
 pub type Completion = fn(&str, usize, usize) -> Vec<String>;
-// pub trait Completion {
-//     fn complete(&mut self, data: &str, start: usize, end: usize) -> Vec<String>;
-// }
-
-// impl<F: Fn(&str, usize, usize) -> Vec<String>> Completion for F {
-//     fn complete(&mut self, data: &str, start: usize, end: usize) -> Vec<String> {
-//         (self)(data, start, end)
-//     }
-// }
 
 /// The default characters on which to break words.
 pub const WORD_BREAKS: &str = "-_=+[]{}()<>,./\\`'\";:!@#$%^&*?|~ ";
@@ -64,23 +46,17 @@ pub enum EditResult {
 ///     EditResult::Quit => std::process::exit(1),
 /// }
 /// ```
-pub struct Editor<
-    'a,
-    P: Display,
-    // H: Highlight = fn(&str) -> String,
-    // C: Completion = fn(&str, usize, usize) -> Vec<String>,
-> {
+#[derive(Debug, Clone)]
+pub struct Editor<P: Display> {
     pub prompt: P,
-    pub word_breaks: &'a str,
-    // pub highlight: Option<H>,
-    // pub completion: Option<C>,
-    pub highlight: Option<fn(&str) -> String>,
-    pub completion: Option<fn(&str, usize, usize) -> Vec<String>>,
+    pub word_breaks: Box<str>,
+    pub highlight: Option<Highlight>,
+    pub completion: Option<Completion>,
     pub history: Option<History>,
 }
 
 // impl<P: Display> Editor<'static, P, fn(&str) -> String, fn(&str, usize, usize) -> Vec<String>> {
-impl<P: Display> Editor<'static, P> {
+impl<P: Display> Editor<P> {
     /// Creates a new editor with empty highlight and default word breaks.
     ///
     /// Example:
@@ -91,7 +67,7 @@ impl<P: Display> Editor<'static, P> {
     pub fn new(prompt: P) -> Self {
         Self {
             prompt,
-            word_breaks: WORD_BREAKS,
+            word_breaks: Box::from(WORD_BREAKS),
             highlight: None,
             history: None,
             completion: None,
@@ -100,7 +76,7 @@ impl<P: Display> Editor<'static, P> {
 }
 
 // impl<'a, P: Display, H: Highlight, C: Completion> Editor<'a, P, H, C> {
-impl<'a, P: Display> Editor<'a, P> {
+impl<P: Display> Editor<P> {
     /// Sets the word break characters the editor respects.
     ///
     /// Example:
@@ -108,16 +84,12 @@ impl<'a, P: Display> Editor<'a, P> {
     /// # use linoleum::Editor;
     /// // Create a new editor that doesn't break words.
     /// let editor = Editor::new(" > ")
-    ///     .word_breaks("");
+    ///     .word_breaks("".into());
     /// ```
-    // pub fn word_breaks<'na>(self, word_breaks: &'na str) -> Editor<'na, P, H, C> {
-    pub fn word_breaks(self, word_breaks: &str) -> Editor<P> {
+    pub fn word_breaks(self, word_breaks: Box<str>) -> Editor<P> {
         Editor {
-            prompt: self.prompt,
             word_breaks,
-            highlight: self.highlight,
-            history: self.history,
-            completion: self.completion,
+            ..self
         }
     }
 
@@ -131,14 +103,10 @@ impl<'a, P: Display> Editor<'a, P> {
     /// let editor = Editor::new(" > ")
     ///     .highlight(|data| data.replace("foo", "bar"));
     /// ```
-    // pub fn highlight<NH: Highlight>(self, highlight: NH) -> Editor<'a, P, NH, C> {
     pub fn highlight(self, highlight: Highlight) -> Self {
         Editor {
-            prompt: self.prompt,
-            word_breaks: self.word_breaks,
             highlight: Some(highlight),
-            history: self.history,
-            completion: self.completion,
+            ..self
         }
     }
 
@@ -159,7 +127,6 @@ impl<'a, P: Display> Editor<'a, P> {
     /// let editor = Editor::new(" > ")
     ///     .completion(complete);
     /// ```
-    // pub fn completion<NC: Completion>(self, completion: NC) -> Editor<'a, P, H, NC> {
     pub fn completion(self, completion: Completion) -> Self {
         Editor {
             prompt: self.prompt,
@@ -533,7 +500,6 @@ impl<'a, P: Display> Editor<'a, P> {
                     KeyCode::Tab => {
                         let word_start = self.find_space_boundary(&data, cursor, true);
                         if let Some(c) = &mut self.completion {
-                            // completions = c.complete(&data, word_start, cursor);
                             completions = (c)(&data, word_start, cursor);
                         } else {
                             continue;
@@ -789,7 +755,6 @@ impl<'a, P: Display> Editor<'a, P> {
 
         let data_length = data.len();
         let data = if let Some(h) = &mut self.highlight {
-            // h.highlight(data)
             (h)(data)
         } else {
             data.to_string()

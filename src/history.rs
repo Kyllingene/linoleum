@@ -1,6 +1,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, ErrorKind, Read, Write};
 
+#[derive(Debug, Clone)]
 pub struct History {
     lines: Vec<String>,
     file: String,
