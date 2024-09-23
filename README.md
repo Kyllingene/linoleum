@@ -1,6 +1,6 @@
 # Linoleum
 
-Linoleum is a smooth line editor designed for use in the [`gosh` shell](https://github.com/Kyllingene/gosh). It's ergonomic, both on the developer side and the user side.
+Linoleum is a smooth line editor designed roughly for a REPL experience. It's ergonomic, both on the developer side and the user side.
 
 It supports Ctrl-C/-D/-Left/-Right/-Backspace, all out of the box. The characters used by the latter three to delimit words are fully configurable.
 
